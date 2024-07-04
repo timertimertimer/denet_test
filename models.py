@@ -14,10 +14,9 @@ class Token:
             symbol: str,
             total_supply: int,
     ):
-        key = (address, name, decimals, symbol, total_supply)
-        if key not in cls._instances:
-            cls._instances[key] = super().__new__(cls)
-        return cls._instances[key]
+        if address not in cls._instances:
+            cls._instances[address] = super().__new__(cls)
+        return cls._instances[address]
 
     def __init__(
             self,
@@ -36,6 +35,10 @@ class Token:
     def __str__(self):
         return '{' + (f'address: "{self.address}", symbol: "{self.symbol}", name: "{self.name}", totalSupply: '
                       f'{self.total_supply}, decimals: {self.decimals}') + '}'
+
+    @classmethod
+    def get_instance(cls, address: str):
+        return cls._instances.get(address, None)
 
 
 class TokenAmount:

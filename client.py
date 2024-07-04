@@ -1,11 +1,10 @@
 import asyncio
 import aiohttp
-from decimal import Decimal
-from pprint import pprint
 from aiohttp import BasicAuth
 from web3 import AsyncWeb3
 from consts import *
 from models import *
+from logger import logger
 
 
 class Client:
@@ -16,29 +15,37 @@ class Client:
     @staticmethod
     async def fetch_goldrush(method: str, url: str, params: dict = None):
         async with aiohttp.ClientSession(
-                headers={'Content-Type': 'application/json'}, auth=BasicAuth(GOLDRUSH_API_TOKEN, )
+                headers={'Content-Type': 'application/json'}, auth=BasicAuth(GOLDRUSH_API_TOKEN, ),
+                timeout=aiohttp.ClientTimeout(total=10)
         ) as session:
-            print(method, url, params)
-            return await session.request(method, url, params=params)
+            logger.info(f'{method} {url} params={params}')
+            while True:
+                try:
+                    response = await session.request(method, url, params=params)
+                    data = await response.json()
+                    return response, data
+                except TimeoutError:
+                    logger.info(f'Got timeout after 10 sec')
+                    ...
 
     async def get_balance(self, owner_address: str) -> TokenAmount:
         token = await self.get_token_info(self.token_contract.address)
         balance = await self.token_contract.functions.balanceOf(self.w3.to_checksum_address(owner_address)).call()
         token_amount = TokenAmount(owner_address, balance, token, True)
-        pprint(token_amount)
+        logger.info(token_amount)
         return token_amount
 
     async def get_balance_batch(self, addresses: list[str]) -> list[TokenAmount]:
         batch_balance = await asyncio.gather(*[self.get_balance(address) for address in addresses])
-        pprint(batch_balance)
+        logger.info(batch_balance)
         return batch_balance
 
     async def get_top_holders(self, n: int) -> list[TokenAmount]:
-        response = await self.fetch_goldrush(
+        response, data = await self.fetch_goldrush(
             'GET',
             f'https://api.covalenthq.com/v1/matic-mainnet/tokens/{self.token_contract.address}/token_holders_v2/'
         )
-        data = (await response.json())['data']['items']
+        data = data['data']['items']
         top_holders = [
             TokenAmount(
                 holder['address'],
@@ -54,38 +61,41 @@ class Client:
             )
             for holder in data[:n]
         ]
-        pprint(top_holders)
+        logger.info(top_holders)
         return top_holders
 
     async def _get_top_holder_with_transaction_date(self, holder: TokenAmount) -> str:
-        response = await self.fetch_goldrush(
+        response, data = await self.fetch_goldrush(
             'GET',
             f'https://api.covalenthq.com/v1/matic-mainnet/address/{holder.owner_address}/transactions_summary/'
         )
-        return (await response.json())['data']['items'][0]['latest_transaction']['block_signed_at']
+        return data['data']['items'][0]['latest_transaction']['block_signed_at']
 
     async def get_top_holders_with_transaction_date(self, n: int) -> list:
         holders = await self.get_top_holders(n)
-        return list(zip(holders, await asyncio.gather(
-            *[self._get_top_holder_with_transaction_date(holder) for holder in holders])))
+        tx_dates = await asyncio.gather(*[self._get_top_holder_with_transaction_date(holder) for holder in holders])
+        result = [(holder.owner_address, holder.format_ether(), date) for holder, date in zip(holders, tx_dates)]
+        logger.info(result)
+        return result
 
-    async def get_token_info(self, address) -> Token:
-        token = Token(
+    async def get_token_info(self, address: str = TOKEN_ADDRESS) -> Token:
+        contract = self.w3.eth.contract(self.w3.to_checksum_address(address), abi=ERC20_ABI)
+        token = Token.get_instance(address) or Token(
             address,
             *(await asyncio.gather(
-                self.token_contract.functions.name().call(),
-                self.token_contract.functions.decimals().call(),
-                self.token_contract.functions.symbol().call(),
-                self.token_contract.functions.totalSupply().call()
+                contract.functions.name().call(),
+                contract.functions.decimals().call(),
+                contract.functions.symbol().call(),
+                contract.functions.totalSupply().call()
             ))
         )
-        print(token)
+        logger.info(token)
         return token
 
 
 async def main():
     client = Client()
-    await client.get_top_holders_with_transaction_date(1)
+    await client.get_top_holders_with_transaction_date(3)
 
 
 if __name__ == '__main__':

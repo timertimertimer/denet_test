@@ -1,5 +1,6 @@
 from flask import Flask, request, jsonify
 from client import Client
+from consts import TOKEN_ADDRESS
 
 app = Flask(__name__)
 client = Client()
@@ -34,12 +35,16 @@ async def get_top_holders():
 @app.route('/get_top_holders_with_transaction_date')
 async def get_top_holders_with_transaction_date():
     holders_with_date = await client.get_top_holders_with_transaction_date(int(request.args.get('n')))
-    return jsonify({'top_holders': {holder.owner_address: date for holder, date in holders_with_date}})
+    return jsonify({
+        'top_holders': {
+            owner_address: {'balance': balance, 'last_transaction_date': date}
+            for owner_address, balance, date in holders_with_date}
+    })
 
 
 @app.route('/get_token_info')
 async def get_token_info():
-    token = await client.get_token_info(request.args.get('address'))
+    token = await client.get_token_info(request.args.get('address', TOKEN_ADDRESS))
     return jsonify(
         {
             'address': token.address, 'symbol': token.symbol, 'name': token.name,
